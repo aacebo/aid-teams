@@ -1,0 +1,25 @@
+{
+  "name": "aid-teams",
+  "version": "0.0.0",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "start": "tsx -r dotenv/config src/index.ts",
+    "dev": "tsx watch -r dotenv/config src/index.ts",
+    "deploy": "a365 setup all --skip-infrastructure",
+    "endpoint": "a365 setup blueprint --m365 --update-endpoint",
+    "package": "a365 publish"
+  },
+  "dependencies": {
+    "@microsoft/teams.apps": "latest",
+    "@microsoft/teams.dev": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.5.4",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "id": "ed26402d-9812-402a-beba-f17359f65e6c",
+  "name": {
+    "short": "Adaptive Card Agent",
+    "full": "Adaptive Card Agent"
+  },
+  "description": {
+    "short": "Your #1 Super Agent",
+    "full": "Your #1 Super Agent"
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#9ec9d9",
+  "bots": [
+    {
+      "botId": "ed26402d-9812-402a-beba-f17359f65e6c",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "version": "1.0.7",
+  "manifestVersion": "devPreview",
+  "developer": {
+    "name": "Microsoft Corporation",
+    "mpnId": "",
+    "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+  },
+  "agenticUserTemplates": [
+    {
+      "id": "7b0926a6-c4ee-445a-a913-bd054594bd09",
+      "file": "agenticUserTemplateManifest.json"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+.env
+a365.config.json
+a365.generated.*.json
+node_modules/
+dist/
