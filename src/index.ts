@@ -13,9 +13,6 @@ const tokenClient = new AgentTokenClient({
 });
 
 const app = new App({
-  // clientId: process.env.connections__service_connection__settings__clientId,
-  // clientSecret: process.env.connections__service_connection__settings__clientSecret,
-  // tenantId: process.env.connections__service_connection__settings__tenantId,
   activity: {
     mentions: {
       stripText: true
@@ -39,12 +36,12 @@ app.use(async (ctx) => {
   const http = new HttpClient({ token: agentToken });
   const sender = new ActivitySender(http, ctx.log);
   // Agent tokens must be sent to the global smba endpoint, not the per-tenant S2S connector serviceUrl
-  const agentRef = { ...ctx.ref, serviceUrl: 'https://smba.trafficmanager.net/teams' };
+  // const agentRef = { ...ctx.ref, serviceUrl: 'https://smba.trafficmanager.net/teams' };
 
   // Pass a mutated ctx to next() so the router uses it as mergedContext instead of rebuilding from toInterface()
   return ctx.next({
     ...ctx,
-    send: (activity, conversationRef) => sender.send(toActivityParams(activity), conversationRef ?? agentRef),
+    send: (activity, conversationRef) => sender.send(toActivityParams(activity), conversationRef ?? ctx.ref),
   });
 });
 
