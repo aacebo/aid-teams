@@ -12,8 +12,9 @@
     "package": "a365 publish"
   },
   "dependencies": {
-    "@microsoft/teams.apps": "latest",
     "@microsoft/teams.api": "latest",
+    "@microsoft/teams.apps": "latest",
+    "@microsoft/teams.cards": "latest",
     "@microsoft/teams.dev": "latest"
   },
   "devDependencies": {

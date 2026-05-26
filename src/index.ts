@@ -2,9 +2,10 @@ import { App } from '@microsoft/teams.apps';
 import { ActivitySender } from '@microsoft/teams.apps/dist/activity-sender';
 import { DevtoolsPlugin } from '@microsoft/teams.dev';
 import { Client as HttpClient } from '@microsoft/teams.common';
-import { toActivityParams } from '@microsoft/teams.api';
+import { toActivityParams, MessageActivity } from '@microsoft/teams.api';
 import { AgentTokenClient } from './agent-token-client';
-import type { AgenticRecipient, AgentsChannelData } from './models/index';
+import { createPollCard } from './cards/index';
+import type { AgenticRecipient } from './models/index';
 
 const tokenClient = new AgentTokenClient({
   tenantId: process.env.connections__service_connection__settings__tenantId!,
@@ -25,6 +26,9 @@ app.event('error', ({ error, activity }) => {
   app.log.error(`${error.message}\n${error.stack ?? ''}`, { activity });
 });
 
+// !!NOTE!!
+// this will not be needed once the Teams SDK has official
+// Agent Identity support.
 app.use(async (ctx) => {
   const recipient = ctx.activity.recipient as AgenticRecipient;
   const agentIdentityId = recipient?.agenticAppId;
@@ -35,13 +39,18 @@ app.use(async (ctx) => {
   const agentToken = await tokenClient.getToken('https://botapi.skype.com/.default', agentIdentityId, agentUserOid);
   const http = new HttpClient({ token: agentToken });
   const sender = new ActivitySender(http, ctx.log);
-  // Agent tokens must be sent to the global smba endpoint, not the per-tenant S2S connector serviceUrl
-  // const agentRef = { ...ctx.ref, serviceUrl: 'https://smba.trafficmanager.net/teams' };
 
-  // Pass a mutated ctx to next() so the router uses it as mergedContext instead of rebuilding from toInterface()
   return ctx.next({
     ...ctx,
-    send: (activity, conversationRef) => sender.send(toActivityParams(activity), conversationRef ?? ctx.ref),
+    send: (activity, conversationRef) => {
+      let req = toActivityParams(activity);
+      req.channelId = ctx.activity.channelId;
+      req.recipient = ctx.activity.from;
+      req.from = ctx.activity.recipient;
+      req.channelData = ctx.activity.channelData;
+      ctx.log.debug(`sending activity => ${JSON.stringify(req, null, 2)}`);
+      return sender.send(toActivityParams(req), conversationRef ?? ctx.ref);
+    },
   });
 });
 
@@ -49,9 +58,14 @@ app.use(async (ctx) => {
 app.on('message', async (ctx) => {
   if (ctx.activity.channelId !== 'msteams') { await ctx.next(ctx); return; }
 
-  const convType = ctx.activity.conversation.conversationType; // 'personal' | 'groupChat' | 'channel'
-  ctx.log.info(`teams [${convType}] from ${ctx.activity.from.name}: ${ctx.activity.text}`);
-  await ctx.send(`you said: "${ctx.activity.text}"`);
+  await ctx.send(new MessageActivity().addCard('adaptive', createPollCard(
+    `You said: "${ctx.activity.text}" — what do you think?`,
+    [
+      { title: 'Agree', value: 'agree' },
+      { title: 'Disagree', value: 'disagree' },
+      { title: 'Not sure', value: 'not_sure' },
+    ]
+  )));
 });
 
 // Agent 365 — all M365 surface notifications arrive on channelId "agents"
@@ -59,29 +73,27 @@ app.on('message', async (ctx) => {
 // Word/Excel/PowerPoint: channelData.productContext
 app.on('message', async (ctx) => {
   if (ctx.activity.channelId !== 'agents') { await ctx.next(ctx); return; }
-
-  const channelData = ctx.activity.channelData as AgentsChannelData;
-  const productContext = channelData?.productContext;
-  const isEmail = ctx.activity.entities?.some(
-    (e: any) => e.type === 'emailNotification'
+  let card = createPollCard(
+    'what do you think?',
+    [
+      { title: 'Agree', value: 'agree' },
+      { title: 'Disagree', value: 'disagree' },
+      { title: 'Not sure', value: 'not_sure' },
+    ]
   );
 
-  if (!isEmail && !productContext) return;
+  await ctx.send(new MessageActivity('reply').addCard('adaptive', card));
+});
 
-  if (isEmail) {
-    ctx.log.info(`email from ${ctx.activity.from.id}: ${ctx.activity.text}`);
-  } else {
-    ctx.log.info(`${productContext} comment from ${ctx.activity.from.name}: ${ctx.activity.text}`);
-  }
+app.on('card.action.poll.submit', async ({ send, activity }) => {
+  const data = activity.value?.action?.data;
+  await send(`You voted: ${data?.choice}`);
 
-  await ctx.send({
-    channelId: 'agents',
-    type: 'message',
-    text: `you said: "${ctx.activity.text}"`,
-    recipient: ctx.activity.from,
-    from: ctx.activity.recipient,
-    channelData,
-  });
+  return {
+    statusCode: 200,
+    type: 'application/vnd.microsoft.activity.message',
+    value: 'Vote recorded',
+  };
 });
 
 (async () => {
