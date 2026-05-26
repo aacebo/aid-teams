@@ -46,35 +46,42 @@ app.use(async (ctx) => {
 });
 
 // Teams — standard Bot Framework channel (S2S auth = receives all group chat messages without @mention)
-app.on('message', async ({ activity, send, next, log }) => {
-  if (activity.channelId !== 'msteams') { await next(); return; }
+app.on('message', async (ctx) => {
+  if (ctx.activity.channelId !== 'msteams') { await ctx.next(ctx); return; }
 
-  const convType = activity.conversation.conversationType; // 'personal' | 'groupChat' | 'channel'
-  log.info(`teams [${convType}] from ${activity.from.name}: ${activity.text}`);
-  await send(`you said: "${activity.text}"`);
+  const convType = ctx.activity.conversation.conversationType; // 'personal' | 'groupChat' | 'channel'
+  ctx.log.info(`teams [${convType}] from ${ctx.activity.from.name}: ${ctx.activity.text}`);
+  await ctx.send(`you said: "${ctx.activity.text}"`);
 });
 
 // Agent 365 — all M365 surface notifications arrive on channelId "agents"
 // Email: entities[].type === "emailNotification"
 // Word/Excel/PowerPoint: channelData.productContext
-app.on('message', async ({ activity, send, next, log }) => {
-  if (activity.channelId !== 'agents') { await next(); return; }
+app.on('message', async (ctx) => {
+  if (ctx.activity.channelId !== 'agents') { await ctx.next(ctx); return; }
 
-  const channelData = activity.channelData as AgentsChannelData;
+  const channelData = ctx.activity.channelData as AgentsChannelData;
   const productContext = channelData?.productContext;
-  const isEmail = activity.entities?.some(
-    (e) => (e as unknown as { type: string }).type === 'emailNotification'
+  const isEmail = ctx.activity.entities?.some(
+    (e: any) => e.type === 'emailNotification'
   );
 
   if (!isEmail && !productContext) return;
 
   if (isEmail) {
-    log.info(`email from ${activity.from.id}: ${activity.text}`);
+    ctx.log.info(`email from ${ctx.activity.from.id}: ${ctx.activity.text}`);
   } else {
-    log.info(`${productContext} comment from ${activity.from.name}: ${activity.text}`);
+    ctx.log.info(`${productContext} comment from ${ctx.activity.from.name}: ${ctx.activity.text}`);
   }
 
-  await send(`you said: "${activity.text}"`);
+  await ctx.send({
+    channelId: 'agents',
+    type: 'message',
+    text: `you said: "${ctx.activity.text}"`,
+    recipient: ctx.activity.from,
+    from: ctx.activity.recipient,
+    channelData,
+  });
 });
 
 (async () => {
