@@ -12,8 +12,6 @@ export type AgentTokenClientOptions = {
   readonly tenantId: string;
   readonly clientId: string;
   readonly clientSecret: string;
-  readonly agentIdentityId: string;
-  readonly agentUserOid: string;
 };
 
 const FMI_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
@@ -24,19 +22,20 @@ export class AgentTokenClient {
 
   constructor(private readonly opts: AgentTokenClientOptions) {}
 
-  async getToken(scope: string | string[]): Promise<string> {
+  async getToken(scope: string | string[], agentIdentityId: string, userOid: string): Promise<string> {
     const normalized = this.normalizeScope(scope);
-    const cached = this.cache.get(normalized);
+    const cacheKey = `${agentIdentityId}:${userOid}:${normalized}`;
+    const cached = this.cache.get(cacheKey);
 
     if (cached && this.isCacheValid(cached)) {
       return cached.token;
     }
 
-    const t1 = await this.fetchT1();
-    const t2 = await this.fetchT2(t1);
-    const res = await this.fetchFinal(normalized, t1, t2);
+    const t1 = await this.fetchT1(agentIdentityId);
+    const t2 = await this.fetchT2(agentIdentityId, t1);
+    const res = await this.fetchFinal(normalized, agentIdentityId, userOid, t1, t2);
 
-    this.cache.set(normalized, {
+    this.cache.set(cacheKey, {
       token: res.access_token,
       expiresAtMs: Date.now() + res.expires_in * 1000,
     });
@@ -68,22 +67,22 @@ export class AgentTokenClient {
     return res.json() as Promise<TokenResponse>;
   }
 
-  private async fetchT1(): Promise<string> {
+  private async fetchT1(agentIdentityId: string): Promise<string> {
     const res = await this.postToken({
       grant_type: 'client_credentials',
       client_id: this.opts.clientId,
       client_secret: this.opts.clientSecret,
       scope: FMI_EXCHANGE_SCOPE,
-      fmi_path: this.opts.agentIdentityId,
+      fmi_path: agentIdentityId,
     });
 
     return res.access_token;
   }
 
-  private async fetchT2(t1: string): Promise<string> {
+  private async fetchT2(agentIdentityId: string, t1: string): Promise<string> {
     const res = await this.postToken({
       grant_type: 'client_credentials',
-      client_id: this.opts.agentIdentityId,
+      client_id: agentIdentityId,
       client_assertion_type: JWT_BEARER_TYPE,
       client_assertion: t1,
       scope: FMI_EXCHANGE_SCOPE,
@@ -92,14 +91,14 @@ export class AgentTokenClient {
     return res.access_token;
   }
 
-  private async fetchFinal(scope: string, t1: string, t2: string): Promise<TokenResponse> {
+  private async fetchFinal(scope: string, agentIdentityId: string, userOid: string, t1: string, t2: string): Promise<TokenResponse> {
     return this.postToken({
       grant_type: 'user_fic',
-      client_id: this.opts.agentIdentityId,
+      client_id: agentIdentityId,
       client_assertion_type: JWT_BEARER_TYPE,
       client_assertion: t1,
       user_federated_identity_credential: t2,
-      user_id: this.opts.agentUserOid,
+      user_id: userOid,
       requested_token_use: 'on_behalf_of',
       scope,
     });

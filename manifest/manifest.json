@@ -26,7 +26,7 @@
       "isNotificationOnly": false
     }
   ],
-  "version": "1.0.7",
+  "version": "1.0.8",
   "manifestVersion": "devPreview",
   "developer": {
     "name": "Microsoft Corporation",
@@ -34,6 +34,24 @@
     "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
     "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
     "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+  },
+  "webApplicationInfo": {
+    "id": "ed26402d-9812-402a-beba-f17359f65e6c",
+    "resource": "https://RscBasedStoreApp"
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        },
+        {
+          "name": "ChatMessage.Read.Chat",
+          "type": "Application"
+        }
+      ]
+    }
   },
   "agenticUserTemplates": [
     {

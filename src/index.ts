@@ -2,19 +2,25 @@ import { App } from '@microsoft/teams.apps';
 import { ActivitySender } from '@microsoft/teams.apps/dist/activity-sender';
 import { DevtoolsPlugin } from '@microsoft/teams.dev';
 import { Client as HttpClient } from '@microsoft/teams.common';
+import { toActivityParams } from '@microsoft/teams.api';
 import { AgentTokenClient } from './agent-token-client';
-import type { AgentsChannelData } from './models/index';
+import type { AgenticRecipient, AgentsChannelData } from './models/index';
 
 const tokenClient = new AgentTokenClient({
-  tenantId: process.env.TENANT_ID!,
-  clientId: process.env.CLIENT_ID!,
-  clientSecret: process.env.CLIENT_SECRET!,
-  agentIdentityId: process.env.AGENT_IDENTITY_ID!,
-  agentUserOid: process.env.AGENT_USER_OID!,
+  tenantId: process.env.connections__service_connection__settings__tenantId!,
+  clientId: process.env.connections__service_connection__settings__clientId!,
+  clientSecret: process.env.connections__service_connection__settings__clientSecret!,
 });
 
 const app = new App({
-  managedIdentityClientId: process.env.MANAGED_IDENTITY_PRINCIPAL_ID,
+  // clientId: process.env.connections__service_connection__settings__clientId,
+  // clientSecret: process.env.connections__service_connection__settings__clientSecret,
+  // tenantId: process.env.connections__service_connection__settings__tenantId,
+  activity: {
+    mentions: {
+      stripText: true
+    }
+  },
   plugins: [new DevtoolsPlugin()],
 });
 
@@ -23,13 +29,23 @@ app.event('error', ({ error, activity }) => {
 });
 
 app.use(async (ctx) => {
-  if (ctx.activity.channelId !== 'agents') return ctx.next();
+  const recipient = ctx.activity.recipient as AgenticRecipient;
+  const agentIdentityId = recipient?.agenticAppId;
+  const agentUserOid = recipient?.agenticUserId;
 
-  const agentToken = await tokenClient.getToken('https://api.botframework.com/.default');
-  const http = new HttpClient({ token: `Bearer ${agentToken}` });
-  (ctx as any).activitySender = new ActivitySender(http, app.log);
+  if (!agentIdentityId || !agentUserOid) return ctx.next();
 
-  return ctx.next();
+  const agentToken = await tokenClient.getToken('https://botapi.skype.com/.default', agentIdentityId, agentUserOid);
+  const http = new HttpClient({ token: agentToken });
+  const sender = new ActivitySender(http, ctx.log);
+  // Agent tokens must be sent to the global smba endpoint, not the per-tenant S2S connector serviceUrl
+  const agentRef = { ...ctx.ref, serviceUrl: 'https://smba.trafficmanager.net/teams' };
+
+  // Pass a mutated ctx to next() so the router uses it as mergedContext instead of rebuilding from toInterface()
+  return ctx.next({
+    ...ctx,
+    send: (activity, conversationRef) => sender.send(toActivityParams(activity), conversationRef ?? agentRef),
+  });
 });
 
 // Teams — standard Bot Framework channel (S2S auth = receives all group chat messages without @mention)
