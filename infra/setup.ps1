@@ -12,7 +12,7 @@
          (pauses for admin consent URL — script prints it and waits)
       5. Patch OAuth2 grant leading-space bug (known a365 CLI defect)
       6. Update .env with new blueprint credentials
-      7. Update manifest files + re-zip
+      7. Update manifest files + re-zip (manifest/agent/ and manifest/bot/)
       8. Print upload instructions
 
     Safe to re-run. Skips Entra app creation if one with the same display name
@@ -408,42 +408,93 @@ if (-not (Test-Path $generatedConfigPath)) {
     if (-not $blueprintId) {
         Write-Warn 'agentBlueprintId is empty — skipping manifest update'
     } else {
-        $manifestDir  = Join-Path $ProjectRoot 'manifest'
-        $manifestPath = Join-Path $manifestDir 'manifest.json'
-        $agenticPath  = Join-Path $manifestDir 'agenticUserTemplateManifest.json'
-        $zipPath      = Join-Path $manifestDir 'manifest.zip'
+        $manifestDir   = Join-Path $ProjectRoot 'manifest'
+        $agentDir      = Join-Path $manifestDir 'agent'
+        $botDir        = Join-Path $manifestDir 'bot'
+        $agentManifest = Join-Path $agentDir 'manifest.json'
+        $agenticPath   = Join-Path $agentDir 'agenticUserTemplateManifest.json'
+        $botManifest   = Join-Path $botDir 'manifest.json'
+        $agentZip      = Join-Path $agentDir 'manifest.zip'
+        $botZip        = Join-Path $botDir 'manifest.zip'
 
-        $manifest   = Get-Content $manifestPath -Raw | ConvertFrom-Json
-        $vParts     = ($manifest.version -replace '[^\d\.]','') -split '\.'
+        $existing   = Get-Content $agentManifest -Raw | ConvertFrom-Json
+        $vParts     = ($existing.version -replace '[^\d\.]','') -split '\.'
         $newVersion = "$($vParts[0]).$($vParts[1]).$([int]$vParts[2] + 1)"
 
-        $newManifest = [ordered]@{
+        $developer = [ordered]@{
+            name          = 'Microsoft Corporation'
+            mpnId         = ''
+            websiteUrl    = 'https://go.microsoft.com/fwlink/?LinkId=518028'
+            privacyUrl    = 'https://go.microsoft.com/fwlink/?LinkId=518028'
+            termsOfUseUrl = 'https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html'
+        }
+
+        # Agent identity manifest — personal scope only, no RSC/webApplicationInfo
+        $agentManifestObj = [ordered]@{
             '$schema'            = 'https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json'
             id                   = $blueprintId
+            version              = $newVersion
+            manifestVersion      = 'devPreview'
+            accentColor          = '#9ec9d9'
             name                 = [ordered]@{ short = $AppDisplayName; full = $AppDisplayName }
             description          = [ordered]@{ short = 'Your #1 Super Agent'; full = 'Your #1 Super Agent' }
             icons                = [ordered]@{ outline = 'outline.png'; color = 'color.png' }
-            accentColor          = '#9ec9d9'
+            developer            = $developer
             bots                 = @([ordered]@{
+                botId              = $blueprintId
+                scopes             = @('personal')
+                supportsFiles      = $false
+                isNotificationOnly = $false
+            })
+            agenticUserTemplates = @([ordered]@{
+                id   = '7b0926a6-c4ee-445a-a913-bd054594bd09'
+                file = 'agenticUserTemplateManifest.json'
+            })
+            copilotAgents        = [ordered]@{
+                customEngineAgents = @([ordered]@{
+                    id                    = $blueprintId
+                    type                  = 'bot'
+                    functionsAs           = 'agenticUserOnly'
+                    agenticUserTemplateId = '7b0926a6-c4ee-445a-a913-bd054594bd09'
+                })
+            }
+        }
+        $agentManifestObj | ConvertTo-Json -Depth 10 | Set-Content $agentManifest -Encoding UTF8
+        Write-Ok "agent/manifest.json updated (id: $blueprintId, version: $newVersion)"
+
+        $agentic = Get-Content $agenticPath -Raw | ConvertFrom-Json
+        $agentic.agentIdentityBlueprintId = $blueprintId
+        $agentic | ConvertTo-Json -Depth 10 | Set-Content $agenticPath -Encoding UTF8
+        Write-Ok 'agent/agenticUserTemplateManifest.json updated'
+
+        Remove-Item $agentZip -Force -ErrorAction SilentlyContinue
+        Compress-Archive `
+            -Path "$agentDir/manifest.json", "$agentDir/agenticUserTemplateManifest.json", "$agentDir/color.png", "$agentDir/outline.png" `
+            -DestinationPath $agentZip
+        Write-Ok "agent/manifest.zip created ($($(Get-Item $agentZip).Length) bytes)"
+
+        # Bot manifest — personal/team/groupChat scopes, RSC, webApplicationInfo
+        $botManifestObj = [ordered]@{
+            '$schema'          = 'https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json'
+            id                 = $blueprintId
+            version            = $newVersion
+            manifestVersion    = 'devPreview'
+            accentColor        = '#9ec9d9'
+            name               = [ordered]@{ short = $AppDisplayName; full = $AppDisplayName }
+            description        = [ordered]@{ short = 'Your #1 Super Agent'; full = 'Your #1 Super Agent' }
+            icons              = [ordered]@{ outline = 'outline.png'; color = 'color.png' }
+            developer          = $developer
+            bots               = @([ordered]@{
                 botId              = $blueprintId
                 scopes             = @('personal', 'team', 'groupChat')
                 supportsFiles      = $false
                 isNotificationOnly = $false
             })
-            version              = $newVersion
-            manifestVersion      = 'devPreview'
-            developer            = [ordered]@{
-                name          = 'Microsoft Corporation'
-                mpnId         = ''
-                websiteUrl    = 'https://go.microsoft.com/fwlink/?LinkId=518028'
-                privacyUrl    = 'https://go.microsoft.com/fwlink/?LinkId=518028'
-                termsOfUseUrl = 'https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html'
-            }
-            webApplicationInfo   = [ordered]@{
+            webApplicationInfo = [ordered]@{
                 id       = $blueprintId
                 resource = 'https://RscBasedStoreApp'
             }
-            authorization        = [ordered]@{
+            authorization      = [ordered]@{
                 permissions = [ordered]@{
                     resourceSpecific = @(
                         [ordered]@{ name = 'ChannelMessage.Read.Group'; type = 'Application' },
@@ -451,24 +502,18 @@ if (-not (Test-Path $generatedConfigPath)) {
                     )
                 }
             }
-            agenticUserTemplates = @([ordered]@{
-                id   = '7b0926a6-c4ee-445a-a913-bd054594bd09'
-                file = 'agenticUserTemplateManifest.json'
-            })
+            permissions              = @('identity', 'messageTeamMembers')
+            supportsChannelFeatures  = 'tier1'
+            validDomains             = @()
         }
-        $newManifest | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding UTF8
-        Write-Ok "manifest.json updated (id: $blueprintId, version: $newVersion)"
+        $botManifestObj | ConvertTo-Json -Depth 10 | Set-Content $botManifest -Encoding UTF8
+        Write-Ok "bot/manifest.json updated (id: $blueprintId, version: $newVersion)"
 
-        $agentic = Get-Content $agenticPath -Raw | ConvertFrom-Json
-        $agentic.agentIdentityBlueprintId = $blueprintId
-        $agentic | ConvertTo-Json -Depth 10 | Set-Content $agenticPath -Encoding UTF8
-        Write-Ok 'agenticUserTemplateManifest.json updated'
-
-        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $botZip -Force -ErrorAction SilentlyContinue
         Compress-Archive `
-            -Path "$manifestDir/manifest.json", "$manifestDir/agenticUserTemplateManifest.json", "$manifestDir/color.png", "$manifestDir/outline.png" `
-            -DestinationPath $zipPath
-        Write-Ok "manifest.zip created ($($(Get-Item $zipPath).Length) bytes)"
+            -Path "$botDir/manifest.json", "$botDir/color.png", "$botDir/outline.png" `
+            -DestinationPath $botZip
+        Write-Ok "bot/manifest.zip created ($($(Get-Item $botZip).Length) bytes)"
     }
 }
 
@@ -480,9 +525,13 @@ Write-Host '========================================' -ForegroundColor Green
 Write-Host '  Setup complete!' -ForegroundColor Green
 Write-Host '========================================' -ForegroundColor Green
 Write-Host ''
-Write-Host 'Next step — upload the manifest to the M365 admin center:' -ForegroundColor Cyan
-Write-Host "  File: $ProjectRoot\manifest\manifest.zip" -ForegroundColor White
-Write-Host '  URL:  https://admin.microsoft.com > Agents > All agents > Upload custom agent' -ForegroundColor White
+Write-Host 'Next steps — upload both manifests:' -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  Agent identity (admin.microsoft.com > Agents > Upload custom agent):' -ForegroundColor White
+Write-Host "    $ProjectRoot\manifest\agent\manifest.zip" -ForegroundColor White
+Write-Host ''
+Write-Host '  Teams bot (Teams > Apps > Manage your apps > Upload an app):' -ForegroundColor White
+Write-Host "    $ProjectRoot\manifest\bot\manifest.zip" -ForegroundColor White
 Write-Host ''
 Write-Host 'Then start the dev server:' -ForegroundColor Cyan
 Write-Host '  npm run dev' -ForegroundColor White

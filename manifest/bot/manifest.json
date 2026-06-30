@@ -1,0 +1,49 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "id": "ed26402d-9812-402a-beba-f17359f65e6c",
+  "version": "1.0.11",
+  "manifestVersion": "devPreview",
+  "accentColor": "#9ec9d9",
+  "name": {
+    "short": "Adaptive Card Agent",
+    "full": "Adaptive Card Agent"
+  },
+  "description": {
+    "short": "Your #1 Super Agent",
+    "full": "Your #1 Super Agent"
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "developer": {
+    "name": "Microsoft Corporation",
+    "mpnId": "",
+    "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+  },
+  "bots": [
+    {
+      "botId": "ed26402d-9812-402a-beba-f17359f65e6c",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "webApplicationInfo": {
+    "id": "ed26402d-9812-402a-beba-f17359f65e6c",
+    "resource": "https://RscBasedStoreApp"
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        { "name": "ChannelMessage.Read.Group", "type": "Application" },
+        { "name": "ChatMessage.Read.Chat", "type": "Application" }
+      ]
+    }
+  },
+  "permissions": ["identity", "messageTeamMembers"],
+  "supportsChannelFeatures": "tier1",
+  "validDomains": []
+}

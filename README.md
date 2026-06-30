@@ -86,7 +86,7 @@ Then run the setup script. It handles all 8 phases automatically:
 4. Runs `a365 setup all --m365` (pauses and prints an admin consent URL — open it in a browser and accept as Global Admin)
 5. Patches a known a365 CLI OAuth2 grant bug
 6. Generates `.env` with blueprint credentials
-7. Updates `manifest/manifest.json` and repacks `manifest/manifest.zip`
+7. Updates and repacks `manifest/agent/manifest.zip` (agent identity) and `manifest/bot/manifest.zip` (Teams bot)
 8. Prints upload instructions
 
 ```powershell
@@ -132,14 +132,19 @@ The app starts on `http://localhost:3978` and watches for file changes. Incoming
 
 ---
 
-## 7. Upload the manifest to Teams
+## 7. Upload the manifests
 
-After setup completes, upload the packaged app to your tenant:
+After setup completes, upload both packages to your tenant:
 
+**Agent identity** (enables hiring the agent as an AI teammate):
 1. Go to the [Microsoft 365 Admin Center](https://admin.microsoft.com)
 2. Navigate to **Agents → All agents → Upload custom agent**
-3. Upload `manifest/manifest.zip`
+3. Upload `manifest/agent/manifest.zip`
 4. Approve the agent identity when prompted
+
+**Teams bot** (enables installation in teams, channels, and group chats):
+1. Open Teams → **Apps → Manage your apps → Upload an app**
+2. Upload `manifest/bot/manifest.zip`
 
 ---
 
