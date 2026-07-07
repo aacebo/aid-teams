@@ -97,7 +97,9 @@ pwsh -File infra/setup.ps1 -TunnelEndpoint 'https://abc123.use.devtunnels.ms/api
 
 | Flag | Description |
 |---|---|
-| `-TunnelEndpoint` | Dev tunnel URL. Defaults to the value in `a365.config.json` |
+| `-TunnelEndpoint` | Messaging endpoint override. If omitted, setup resolves the Dev Tunnel `portUri` and appends `/api/messages` |
+| `-TunnelId` | Dev Tunnel ID to resolve when `-TunnelEndpoint` is omitted. Default: `aacebo-3978` |
+| `-TunnelPort` | Dev Tunnel local port to resolve when `-TunnelEndpoint` is omitted. Default: `3978` |
 | `-AppDisplayName` | Entra app + Bot Service display name. Default: `Adaptive Card Agent` |
 | `-ResourceGroup` | Azure resource group. Default: `aacebo-rg` |
 | `-Force` | Rotate the Entra client secret even if the app already exists |

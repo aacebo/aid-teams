@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 type TokenResponse = {
   access_token: string;
   expires_in: number;
@@ -8,50 +10,34 @@ type CacheEntry = {
   expiresAtMs: number;
 };
 
-export type AgentTokenClientOptions = {
+export type AgentOboTokenClientOptions = {
   readonly tenantId: string;
   readonly clientId: string;
   readonly clientSecret: string;
 };
 
-const FMI_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
-const JWT_BEARER_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+const JWT_BEARER_GRANT = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 
-export class AgentTokenClient {
+export class AgentOboTokenClient {
   private readonly cache = new Map<string, CacheEntry>();
 
-  constructor(private readonly opts: AgentTokenClientOptions) {}
+  constructor(private readonly opts: AgentOboTokenClientOptions) {}
 
-  async getToken(scope: string | string[], agentIdentityId: string, userOid: string): Promise<string> {
+  async getToken(scope: string | string[], agentIdentityId: string, userAssertion: string): Promise<string> {
     const normalized = Array.isArray(scope) ? scope.join(' ') : scope;
-    const cacheKey = `${agentIdentityId}:${userOid}:${normalized}`;
+    const hashedAssertion = createHash('sha256').update(userAssertion).digest('hex');
+    const cacheKey = `${agentIdentityId}:${hashedAssertion}:${normalized}`;
     const cached = this.cache.get(cacheKey);
 
     if (cached && Date.now() < cached.expiresAtMs - 5 * 60 * 1000) {
       return cached.token;
     }
 
-    const t1 = (await this.postToken({
-      grant_type: 'client_credentials',
+    const res = await this.postToken({
+      grant_type: JWT_BEARER_GRANT,
       client_id: this.opts.clientId,
       client_secret: this.opts.clientSecret,
-      scope: FMI_EXCHANGE_SCOPE,
-      fmi_path: agentIdentityId,
-    })).access_token;
-    const t2 = (await this.postToken({
-      grant_type: 'client_credentials',
-      client_id: agentIdentityId,
-      client_assertion_type: JWT_BEARER_TYPE,
-      client_assertion: t1,
-      scope: FMI_EXCHANGE_SCOPE,
-    })).access_token;
-    const res = await this.postToken({
-      grant_type: 'user_fic',
-      client_id: agentIdentityId,
-      client_assertion_type: JWT_BEARER_TYPE,
-      client_assertion: t1,
-      user_federated_identity_credential: t2,
-      user_id: userOid,
+      assertion: userAssertion,
       requested_token_use: 'on_behalf_of',
       scope: normalized,
     });

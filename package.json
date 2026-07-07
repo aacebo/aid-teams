@@ -15,7 +15,9 @@
     "@microsoft/teams.api": "latest",
     "@microsoft/teams.apps": "latest",
     "@microsoft/teams.cards": "latest",
-    "@microsoft/teams.dev": "latest"
+    "@microsoft/teams.dev": "latest",
+    "@microsoft/teams.graph": "^2.0.13",
+    "@microsoft/teams.graph-endpoints": "^2.0.13"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

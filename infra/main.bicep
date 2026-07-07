@@ -13,8 +13,8 @@ resource botService 'Microsoft.BotService/botServices@2022-09-15' = {
   properties: {
     displayName: botDisplayName
     msaAppId: botAppId
-    msaAppType: 'MultiTenant'
-    msaAppTenantId: ''
+    msaAppType: 'SingleTenant'
+    msaAppTenantId: tenantId
     endpoint: messagingEndpoint
     schemaTransformationVersion: '1.3'
   }

@@ -6,10 +6,10 @@
     Runs all phases in order:
       1. Create single-tenant Entra app registration + service principal
          (adds redirect URI + wids claim required by a365 CLI)
-      2. Deploy Azure Bot Service + Teams channel via Bicep (rg-aacebo)
-      3. Update a365.config.json with the new clientAppId
-      4. Run a365 setup all --m365
+      2. Update a365.config.json with the new clientAppId
+      3. Run a365 setup all --m365
          (pauses for admin consent URL — script prints it and waits)
+      4. Deploy Azure Bot Service + Teams channel via Bicep (rg-aacebo)
       5. Patch OAuth2 grant leading-space bug (known a365 CLI defect)
       6. Update .env with new blueprint credentials
       7. Update manifest files + re-zip (manifest/agent/ and manifest/bot/)
@@ -19,7 +19,14 @@
     already exists (pass -Force to rotate the secret).
 
 .PARAMETER TunnelEndpoint
-    Devtunnel messaging URL. Default: https://aacebo-3978.use.devtunnels.ms/api/messages
+    Messaging endpoint URL. If omitted, setup resolves the current Dev Tunnel
+    port URI for -TunnelId/-TunnelPort and appends /api/messages.
+
+.PARAMETER TunnelId
+    Dev Tunnel ID to resolve when -TunnelEndpoint is omitted. Default: aacebo-3978
+
+.PARAMETER TunnelPort
+    Dev Tunnel local port to resolve when -TunnelEndpoint is omitted. Default: 3978
 
 .PARAMETER AppDisplayName
     Display name for the Entra app + Bot Service. Default: Adaptive Card Agent
@@ -44,7 +51,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$TunnelEndpoint   = 'https://aacebo-3978.use.devtunnels.ms/api/messages',
+    [string]$TunnelEndpoint,
+    [string]$TunnelId         = 'aacebo-3978',
+    [int]$TunnelPort          = 3978,
     [string]$AppDisplayName   = 'Adaptive Card Agent',
     [string]$ResourceGroup    = 'aacebo-rg',
     [switch]$Force,
@@ -54,11 +63,66 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = (Get-Item "$PSScriptRoot/..").FullName
+$configPath = Join-Path $ProjectRoot 'a365.config.json'
+$generatedConfigPath = Join-Path $ProjectRoot 'a365.generated.config.json'
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok([string]$msg)   { Write-Host "  OK  $msg" -ForegroundColor Green }
 function Write-Warn([string]$msg) { Write-Host "  WARN $msg" -ForegroundColor Yellow }
 function Write-Fail([string]$msg) { Write-Host "  FAIL $msg" -ForegroundColor Red; exit 1 }
+
+function Format-MessagingEndpoint([string]$endpoint) {
+    if ([string]::IsNullOrWhiteSpace($endpoint)) { return $null }
+
+    $clean = $endpoint.Trim().TrimEnd('/')
+    if ($clean.EndsWith('/api/messages')) { return $clean }
+
+    return "$clean/api/messages"
+}
+
+function Get-DevTunnelPortUri([string]$id, [int]$portNumber) {
+    try {
+        $showJson = devtunnel show $id --json 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $showJson) { return $null }
+
+        $details = $showJson | ConvertFrom-Json
+        $port = @($details.tunnel.ports) |
+            Where-Object { [int]$_.portNumber -eq $portNumber } |
+            Select-Object -First 1
+
+        return $port.portUri
+    } catch {
+        return $null
+    }
+}
+
+function Resolve-MessagingEndpoint {
+    if ($PSBoundParameters.ContainsKey('TunnelEndpoint')) {
+        $resolved = Format-MessagingEndpoint $TunnelEndpoint
+        if (-not $resolved) { Write-Fail '-TunnelEndpoint was provided but empty' }
+
+        Write-Ok "Using messaging endpoint from -TunnelEndpoint: $resolved"
+        return $resolved
+    }
+
+    $portUri = Get-DevTunnelPortUri $TunnelId $TunnelPort
+    if ($portUri) {
+        $resolved = Format-MessagingEndpoint $portUri
+        Write-Ok "Using Dev Tunnel port URI for ${TunnelId}:${TunnelPort}: $resolved"
+        return $resolved
+    }
+
+    if (Test-Path $configPath) {
+        $configEndpoint = (Get-Content $configPath -Raw | ConvertFrom-Json).messagingEndpoint
+        $resolved = Format-MessagingEndpoint $configEndpoint
+        if ($resolved) {
+            Write-Warn "Could not resolve Dev Tunnel ${TunnelId}:${TunnelPort}; using a365.config.json messagingEndpoint: $resolved"
+            return $resolved
+        }
+    }
+
+    Write-Fail "Could not resolve messaging endpoint. Start the tunnel with: devtunnel host $TunnelId -p $TunnelPort --allow-anonymous"
+}
 
 # ---------------------------------------------------------------------------
 # Preflight
@@ -71,6 +135,9 @@ Write-Ok "Tenant: $($account.tenantId)"
 Write-Ok "Subscription: $($account.name) ($($account.id))"
 
 $tenantId = $account.tenantId
+
+Write-Step 'Resolving messaging endpoint'
+$TunnelEndpoint = Resolve-MessagingEndpoint
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Entra app registration (single-tenant)
@@ -192,64 +259,21 @@ az account get-access-token --output none 2>$null
 Write-Ok 'Token refreshed'
 
 # ---------------------------------------------------------------------------
-# Phase 2 — Azure Bot Service via Bicep
+# Phase 2 — Update a365.config.json
 # ---------------------------------------------------------------------------
-if (-not $SkipBicep) {
-    Write-Step "Phase 2 — Azure Bot Service (rg: $ResourceGroup)"
-
-    # Ensure resource group exists
-    $rg = az group show --name $ResourceGroup --output json 2>$null | ConvertFrom-Json
-    if (-not $rg) {
-        Write-Ok "Creating resource group $ResourceGroup"
-        az group create --name $ResourceGroup --location eastus --output none
-        Write-Ok "Resource group created"
-    } else {
-        Write-Ok "Resource group $ResourceGroup already exists ($($rg.location))"
-    }
-
-    # Bot Service must use the blueprint ID as msaAppId so BF routes to the right identity
-    $generatedConfigPathForBicep = Join-Path $ProjectRoot 'a365.generated.config.json'
-    $bicepBotAppId = $botAppId
-    if (Test-Path $generatedConfigPathForBicep) {
-        $genCfg = Get-Content $generatedConfigPathForBicep -Raw | ConvertFrom-Json
-        if ($genCfg.agentBlueprintId) {
-            $bicepBotAppId = $genCfg.agentBlueprintId
-            Write-Ok "Using blueprint ID for bot msaAppId: $bicepBotAppId"
-        }
-    }
-
-    $botName   = $AppDisplayName.ToLower() -replace '[^a-z0-9]', '-'
-    $bicepPath = Join-Path $PSScriptRoot 'main.bicep'
-    $result = az deployment group create `
-        --resource-group $ResourceGroup `
-        --template-file $bicepPath `
-        --parameters botAppId=$bicepBotAppId messagingEndpoint=$TunnelEndpoint botDisplayName=$AppDisplayName botName=$botName `
-        --output json 2>&1
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host $result
-        Write-Fail "Bicep deployment failed (exit $LASTEXITCODE)"
-    }
-    Write-Ok "Bot Service deployed to $ResourceGroup"
-} else {
-    Write-Warn 'Phase 2 skipped (-SkipBicep)'
-}
-
-# ---------------------------------------------------------------------------
-# Phase 3 — Update a365.config.json
-# ---------------------------------------------------------------------------
-Write-Step 'Phase 3 — Updating a365.config.json'
-$configPath = Join-Path $ProjectRoot 'a365.config.json'
+Write-Step 'Phase 2 — Updating a365.config.json'
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 $config.clientAppId = $botAppId
+$config.messagingEndpoint = $TunnelEndpoint
 $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
 Write-Ok "clientAppId set to $botAppId"
+Write-Ok "messagingEndpoint set to $TunnelEndpoint"
 
 # ---------------------------------------------------------------------------
-# Phase 4 — a365 setup all --m365
+# Phase 3 — a365 setup all --m365
 # ---------------------------------------------------------------------------
 if (-not $SkipA365Setup) {
-    Write-Step 'Phase 4 — Running a365 setup all --m365'
+    Write-Step 'Phase 3 — Running a365 setup all --m365'
     Write-Host ''
     Write-Host '  The CLI will print an admin consent URL.' -ForegroundColor Yellow
     Write-Host '  Open it in your browser, accept as Global Admin, then press ENTER here.' -ForegroundColor Yellow
@@ -282,13 +306,60 @@ if (-not $SkipA365Setup) {
     Read-Host '  Press ENTER once you have accepted the consent'
 
     # Re-run to pick up the grants now that consent is done
-    Write-Step 'Phase 4b — Re-running a365 setup all --m365 to apply grants'
+    Write-Step 'Phase 3b — Re-running a365 setup all --m365 to apply grants'
     Set-Location $ProjectRoot
     'y' | a365 setup all --m365 2>&1 | ForEach-Object { Write-Host "  $_" }
 
     Write-Ok 'a365 setup completed'
 } else {
-    Write-Warn 'Phase 4 skipped (-SkipA365Setup)'
+    Write-Warn 'Phase 3 skipped (-SkipA365Setup)'
+}
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Azure Bot Service via Bicep
+# ---------------------------------------------------------------------------
+if (-not $SkipBicep) {
+    Write-Step "Phase 4 — Azure Bot Service (rg: $ResourceGroup)"
+
+    # Ensure resource group exists
+    $rg = az group show --name $ResourceGroup --output json 2>$null | ConvertFrom-Json
+    if (-not $rg) {
+        Write-Ok "Creating resource group $ResourceGroup"
+        az group create --name $ResourceGroup --location eastus --output none
+        Write-Ok "Resource group created"
+    } else {
+        Write-Ok "Resource group $ResourceGroup already exists ($($rg.location))"
+    }
+
+    # Bot Service must use the blueprint ID as msaAppId so BF routes to the right identity.
+    $bicepBotAppId = $botAppId
+    if (Test-Path $generatedConfigPath) {
+        $genCfg = Get-Content $generatedConfigPath -Raw | ConvertFrom-Json
+        if ($genCfg.agentBlueprintId) {
+            $bicepBotAppId = $genCfg.agentBlueprintId
+            Write-Ok "Using blueprint ID for bot msaAppId: $bicepBotAppId"
+        } else {
+            Write-Warn "a365.generated.config.json exists but agentBlueprintId is empty — deploying bot msaAppId with client app ID: $bicepBotAppId"
+        }
+    } else {
+        Write-Warn "a365.generated.config.json not found — deploying bot msaAppId with client app ID: $bicepBotAppId. Run without -SkipA365Setup to create or refresh the blueprint first."
+    }
+
+    $botName   = $AppDisplayName.ToLower() -replace '[^a-z0-9]', '-'
+    $bicepPath = Join-Path $PSScriptRoot 'main.bicep'
+    $result = az deployment group create `
+        --resource-group $ResourceGroup `
+        --template-file $bicepPath `
+        --parameters botAppId=$bicepBotAppId messagingEndpoint=$TunnelEndpoint botDisplayName=$AppDisplayName botName=$botName tenantId=$tenantId `
+        --output json 2>&1
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host $result
+        Write-Fail "Bicep deployment failed (exit $LASTEXITCODE)"
+    }
+    Write-Ok "Bot Service deployed to $ResourceGroup"
+} else {
+    Write-Warn 'Phase 4 skipped (-SkipBicep)'
 }
 
 # ---------------------------------------------------------------------------
@@ -296,7 +367,6 @@ if (-not $SkipA365Setup) {
 # ---------------------------------------------------------------------------
 Write-Step 'Phase 5 — Patching OAuth2 grant leading-space bug'
 
-$generatedConfigPath = Join-Path $ProjectRoot 'a365.generated.config.json'
 if (-not (Test-Path $generatedConfigPath)) {
     Write-Warn 'a365.generated.config.json not found — skipping (run setup first)'
 } else {

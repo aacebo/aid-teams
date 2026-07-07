@@ -3,9 +3,18 @@ import { ActivitySender } from '@microsoft/teams.apps/dist/activity-sender';
 import { DevtoolsPlugin } from '@microsoft/teams.dev';
 import { Client as HttpClient } from '@microsoft/teams.common';
 import { toActivityParams, MessageActivity } from '@microsoft/teams.api';
+import { GraphError } from '@microsoft/teams.graph';
+import { AgentOboTokenClient } from './agent-obo-token-client';
 import { AgentTokenClient } from './agent-token-client';
 import { createPollCard } from './cards/index';
-import type { AgenticRecipient } from './models/index';
+import { RAW_REQUEST_ID_FIELD, RequestCapturingExpressAdapter } from './request-capturing-express-adapter';
+import {
+  getAgentContext,
+  getIncomingUserAssertion,
+  runCalendarReadProbe,
+  runCalendarWriteProbe,
+  type CalendarContext,
+} from './utils/index';
 
 const tokenClient = new AgentTokenClient({
   tenantId: process.env.connections__service_connection__settings__tenantId!,
@@ -13,12 +22,21 @@ const tokenClient = new AgentTokenClient({
   clientSecret: process.env.connections__service_connection__settings__clientSecret!,
 });
 
+const oboTokenClient = new AgentOboTokenClient({
+  tenantId: process.env.connections__service_connection__settings__tenantId!,
+  clientId: process.env.connections__service_connection__settings__clientId!,
+  clientSecret: process.env.connections__service_connection__settings__clientSecret!,
+});
+
+const CALENDAR_COMMAND = /^\/?calendar\s+(read|write)$/i;
+
 const app = new App({
   activity: {
     mentions: {
       stripText: true
     }
   },
+  httpServerAdapter: new RequestCapturingExpressAdapter(),
   plugins: [new DevtoolsPlugin()],
 });
 
@@ -30,13 +48,15 @@ app.event('error', ({ error, activity }) => {
 // this will not be needed once the Teams SDK has official
 // Agent Identity support.
 app.use(async (ctx) => {
-  const recipient = ctx.activity.recipient as AgenticRecipient;
-  const agentIdentityId = recipient?.agenticAppId;
-  const agentUserOid = recipient?.agenticUserId;
+  const agentContext = getAgentContext(ctx.activity.recipient);
 
-  if (!agentIdentityId || !agentUserOid) return ctx.next();
+  if (!agentContext) return ctx.next();
 
-  const agentToken = await tokenClient.getToken('https://botapi.skype.com/.default', agentIdentityId, agentUserOid);
+  const agentToken = await tokenClient.getToken(
+    'https://botapi.skype.com/.default',
+    agentContext.agentIdentityId,
+    agentContext.agentUserOid
+  );
   const http = new HttpClient({ token: agentToken });
   const sender = new ActivitySender(http, ctx.log);
 
@@ -47,11 +67,57 @@ app.use(async (ctx) => {
       req.channelId = ctx.activity.channelId;
       req.recipient = ctx.activity.from;
       req.from = ctx.activity.recipient;
-      req.channelData = ctx.activity.channelData;
+
+      let channelData = ctx.activity.channelData;
+      if (channelData && typeof channelData === 'object' && !Array.isArray(channelData)) {
+        const publicChannelData = { ...channelData };
+        delete (publicChannelData as Record<string, unknown>)[RAW_REQUEST_ID_FIELD];
+        channelData = publicChannelData;
+      }
+
+      req.channelData = channelData;
       ctx.log.debug(`sending activity => ${JSON.stringify(req, null, 2)}`);
       return sender.send(toActivityParams(req), conversationRef ?? ctx.ref);
     },
   });
+});
+
+app.on('message', async (ctx) => {
+  const command = ctx.activity.text?.trim().match(CALENDAR_COMMAND)?.[1]?.toLowerCase();
+
+  if (!command) { await ctx.next(ctx); return; }
+  if (command !== 'read' && command !== 'write') { await ctx.next(ctx); return; }
+
+  const agentContext = getAgentContext(ctx.activity.recipient);
+
+  if (!agentContext) {
+    await ctx.send('Calendar probe requires Agent 365 context. Send `calendar read` or `calendar write` from the M365 agent surface after deferred consent is granted.');
+    return;
+  }
+
+  try {
+    const userAssertion = getIncomingUserAssertion(ctx.activity, agentContext);
+    const calendarContext: CalendarContext = {
+      agentIdentityId: agentContext.agentIdentityId,
+      senderName: ctx.activity.from?.name,
+      userAssertion: userAssertion.token,
+      userAssertionClaims: userAssertion.claims,
+      userAssertionSource: userAssertion.source,
+    };
+    const message = command === 'read'
+      ? await runCalendarReadProbe(oboTokenClient, calendarContext)
+      : await runCalendarWriteProbe(oboTokenClient, calendarContext);
+
+    await ctx.send(message);
+  } catch (error) {
+    if (error instanceof GraphError) {
+      const code = error.code ? `${error.code}: ` : '';
+      await ctx.send(`Calendar ${command} failed: Graph ${error.statusCode}: ${code}${error.message}`);
+      return;
+    }
+
+    await ctx.send(`Calendar ${command} failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 });
 
 // Teams — standard Bot Framework channel (S2S auth = receives all group chat messages without @mention)
